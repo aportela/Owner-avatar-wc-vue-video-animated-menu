@@ -16,7 +16,7 @@
           <Transition>
             <div id="video-dots" v-if="showVideoDots">
               <span class="dot" v-for="children in menuData.children" :key="children.id" :title="children.dot.hint"
-                :style="'top: ' + children.dot.y + 'px; left: ' + children.dot.x + 'px;'">{{
+                :style="getDotStyle(children.dot.x, children.dot.y)">{{
     children.dot.label }}</span>
             </div>
           </Transition>
@@ -66,8 +66,9 @@ const menuData = {
       dot: {
         label: '1',
         hint: 'one',
-        x: 99,
-        y: 186
+        x: 97,
+        y: 189,
+        padding: 4
       },
       src: 'blender-demo-cube-diorama.mp4',
     },
@@ -257,6 +258,9 @@ function onMouseMoveOverVideo(e: any) {
   }
 }
 
+function getDotStyle(x: number, y: number) {
+  return ('left: ' + (x - 13) + 'px; top: ' + (y - 13) + 'px;')
+}
 </script>
 
 <style>
@@ -278,13 +282,17 @@ span.dot {
   position: absolute;
   background: pink;
   border: 1px solid red;
-  border-radius: 10px;
-  /*
-  warning padding affects static coordinates
-  */
-  padding: 0.4em;
+  border-radius: 13px;
+  width: 24px;
+  font-size: 21px;
+  text-align: center;
   font-weight: bold;
   cursor: pointer;
+  opacity: 0.6;
+}
+
+span.dot:hover {
+  opacity: 1;
 }
 
 .v-enter-active,
