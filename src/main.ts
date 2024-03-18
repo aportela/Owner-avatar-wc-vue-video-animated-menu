@@ -1,5 +1,7 @@
-import { createApp } from 'vue'
-import './style.css'
-import App from './App.vue'
+import { defineCustomElement } from 'vue'
 
-createApp(App).mount('#app')
+import wcVueVideoAnimatedMenu from './VueVideoAnimatedMenu.ce.vue'
+
+const wcVueVideoAnimatedMenuComponent = defineCustomElement(wcVueVideoAnimatedMenu);
+
+customElements.define('wc-vue-video-animated-menu', wcVueVideoAnimatedMenuComponent)
