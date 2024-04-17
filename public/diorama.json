@@ -1,0 +1,57 @@
+{
+  "width": 480,
+  "height": 480,
+  "root": {
+    "type": "video",
+    "mime": "video/mp4",
+    "fps": 25,
+    "source": "videos/diorama-start-rotation.mp4",
+    "children": [
+      {
+        "id": 1,
+        "label": "easel",
+        "hint": "easel",
+        "dot": {
+          "x": 250,
+          "y": 246,
+          "hint": "one",
+          "label": "1"
+        },
+        "type": "video",
+        "mime": "video/mp4",
+        "fps": 25,
+        "source": "videos/diorama-easel-zoom-in-out.mp4"
+      },
+      {
+        "id": 2,
+        "label": "computer",
+        "hint": "computer",
+        "dot": {
+          "x": 341,
+          "y": 266,
+          "hint": "two",
+          "label": "2"
+        },
+        "type": "video",
+        "mime": "video/mp4",
+        "fps": 25,
+        "source": "videos/diorama-zoom-computer-in-out.mp4"
+      },
+      {
+        "id": 3,
+        "label": "plant",
+        "hint": "plant",
+        "dot": {
+          "x": 127,
+          "y": 244,
+          "hint": "three",
+          "label": "3"
+        },
+        "type": "video",
+        "mime": "video/mp4",
+        "fps": 25,
+        "source": "videos/diorama-zoom-plant-in-out.mp4"
+      }
+    ]
+  }
+}
