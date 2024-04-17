@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <div v-if="loading">
+  <div :class="class">
+    <div v-if="loadingConfiguration">
       <!-- credits: https://github.com/n3r4zzurr0/svg-spinners -->
       <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 24 24">
         <path fill="currentColor" d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z"
@@ -12,15 +12,15 @@
         </path>
       </svg>
     </div>
-    <div v-else-if="errors">
+    <div v-else-if="configurationErrors">
       Error!
     </div>
     <div v-else-if="configuration">
       <div class="columns">
         <div id="column is-narrow">
           <ul>
-            <li v-for="children in configuration.root.children" :key="children.id" v-if="showVideoDots">{{
-      children.label }}</li>
+            <li v-for="item in currentMenuItems" :key="item.id" v-if="showVideoDots">{{
+    item.label }}</li>
           </ul>
         </div>
         <div id="column">
@@ -36,7 +36,7 @@
               <div id="video-dots" v-if="showVideoDots">
                 <span class="dot" v-for="children in currentNode.children" :key="children.id" :title="children.dot.hint"
                   :style="getDotStyle(children.dot.x, children.dot.y)" @click="onDotClick(children)">{{
-      children.dot.label }}</span>
+    children.dot.label }}</span>
               </div>
             </Transition>
           </div>
@@ -49,16 +49,16 @@
         <p>Resolution: {{ width }}x{{ height }} <span
             v-if="width != videoData.width || height != videoData.height">(video
             scaled from: {{ videoData.width }}x{{
-      videoData.height }})</span> ({{ videoData.fps }} fps)</p>
+    videoData.height }})</span> ({{ videoData.fps }} fps)</p>
         <p>Frame: {{ currentFrameIndex - range.fromFrame }} / {{ range.toFrame - range.fromFrame }}
           <span v-if="range.custom">(video real frame: {{ currentFrameIndex }} / {{ videoData.totalFrames }})</span>
           <span class="has-text-white has-background-black" v-show="seeking">(SEEKING)</span>
         </p>
         <p>Timeline second: {{ (currentTime - range.fromSecond).toPrecision(3) }} / {{ (range.toSecond -
-      range.fromSecond).toPrecision(3) }}
+    range.fromSecond).toPrecision(3) }}
           <span v-if="range.custom">(video real timeline second: {{ currentTime }} / {{
-      videoData.duration.toPrecision(3)
-    }})</span>
+    videoData.duration.toPrecision(3)
+            }})</span>
         </p>
         <p>
           Mouse coordinates: {{ mouseX }}x{{ mouseY }}
@@ -70,10 +70,11 @@
 
 <script setup lang="ts">
 
-import { ref, withDefaults, watch } from 'vue'
+import { ref, withDefaults, watch, computed } from 'vue'
 import type { Ref } from 'vue'
 
 interface Props {
+  class?: string,
   config?: string,
   showNativeVideoControls?: boolean,
   hideSlider?: boolean,
@@ -88,20 +89,13 @@ const props = withDefaults(defineProps<Props>(), {
   showDebugData: false
 })
 
+/*
 const emit = defineEmits<{
   (e: 'loaded', value: boolean): void
   (e: 'seeking', value: boolean): void
   (e: 'seeked', value: boolean): void
 }>()
-
-interface VideoInfo {
-  width: number,
-  height: number,
-  fps: number,
-  playbackRate: number,
-  duration: number,
-  totalFrames: number
-}
+*/
 
 interface VideoFrameRange {
   custom: boolean,
@@ -113,6 +107,28 @@ interface VideoFrameRange {
   totalFrames: number
 }
 
+interface VideoInfo {
+  width: number,
+  height: number,
+  fps: number,
+  playbackRate: number,
+  duration: number,
+  totalFrames: number,
+  range: VideoFrameRange
+}
+
+
+const defaultFPS = 25
+
+const videoRef = ref<HTMLVideoElement | null>(null)
+const canvasRef = ref<HTMLVideoElement | null>(null)
+
+const showVideoDots: Ref<boolean> = ref(false)
+
+const mouseX: Ref<number> = ref(0)
+const mouseY: Ref<number> = ref(0)
+
+
 const currentNode: Ref<Object> = ref({
   source: null,
   mime: null,
@@ -122,54 +138,52 @@ const currentNode: Ref<Object> = ref({
 
 const previousNode = null;
 
+const loadingConfiguration: Ref<boolean> = ref(true)
+const configurationErrors: Ref<boolean> = ref(false)
+
 const configuration: Ref<Object | null> = ref(null);
 
 if (props.config) {
   fetch(props.config)
     .then(response => {
       if (!response.ok) {
-        throw new Error('El archivo no existe');
+        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
       }
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('application/json')) {
         return response.json();
       } else {
-        console.error('El archivo no es de tipo JSON');
+        throw new Error('Invalid configuration format (JSON required)');
       }
     })
     .then(data => {
-      parseConfiguration(data);
+      if (!(data.root.type == "video" && data.root.mime && data.root.fps > 0 && data.root.source)) { // at this time, only video is supported
+        configurationErrors.value = true;
+      } else {
+        configuration.value = data;
+        currentNode.value.source = data.root.source;
+        currentNode.value.mime = data.root.mime;
+        currentNode.value.children = data.root.children;
+        currentNode.value.fps = data.root.fps || 25;
+        currentNode.value.playbackRate = data.root.playbackRate || 1;
+      }
     })
     .catch(error => {
-      console.error('Error al obtener los datos:', error);
+      console.error('Configuration loading error: ', error);
+      configurationErrors.value = true;
     })
     .finally(() => {
-      //loading.value = false;
+      loadingConfiguration.value = false;
     }
     )
 }
 
+const currentMenuItems = computed(() => {
+  return (configuration.value && configuration.value.root && configuration.value.root.children && configuration.value.root.children.length > 0 ? configuration.value.root.children : []);
+})
 
-function parseConfiguration(config) {
-  if (!(config.root.type == "video" && config.root.mime && config.root.fps > 0 && config.root.source)) { // at this time, only video is supported
-    errors.value = true;
-  } else {
-    configuration.value = config;
-    currentNode.value.source = config.root.source;
-    currentNode.value.mime = config.root.mime;
-    currentNode.value.children = config.root.children;
-    currentNode.value.fps = config.root.fps || 25;
-    currentNode.value.playbackRate = config.root.playbackRate || 1;
-  }
-  loading.value = false;
-}
 
-const loading: Ref<boolean> = ref(true)
-const errors: Ref<boolean> = ref(false)
-
-const videoData: Ref<VideoInfo> = ref({ width: 0, height: 0, fps: 0, duration: 0, totalFrames: 0 })
-const videoRef = ref<HTMLVideoElement | null>(null)
-const canvasRef = ref<HTMLVideoElement | null>(null)
+const videoData: Ref<VideoInfo> = ref({ width: 0, height: 0, fps: 0, playbackRate: 0, duration: 0, totalFrames: 0 })
 
 const loadComplete: Ref<boolean> = ref(false)
 const seeking: Ref<boolean> = ref(false)
@@ -179,13 +193,6 @@ const currentFrameIndex: Ref<number> = ref(0)
 
 const range: Ref<VideoFrameRange> = ref({ custom: false, fromSecond: 0, toSecond: 0, totalSeconds: 0, fromFrame: 0, toFrame: 0, totalFrames: 0 })
 
-const defaultFPS = 25
-
-const containerStyle = "width: " + props.width + "px;"
-
-const showVideoDots: Ref<boolean> = ref(false)
-const mouseX: Ref<number> = ref(0)
-const mouseY: Ref<number> = ref(0)
 
 watch(currentFrameIndex, (newValue: number) => {
   if (!seeking.value) {
@@ -237,7 +244,7 @@ function onVideoLoaded(e: any) {
     currentFrameIndex.value = range.value.fromFrame
   }
   loadComplete.value = true
-  emit('loaded', true)
+  //emit('loaded', true)
 }
 
 function onVideoPlay() {
@@ -246,12 +253,12 @@ function onVideoPlay() {
 
 function onVideoSeeking() {
   seeking.value = true
-  emit('seeking', true)
+  //emit('seeking', true)
 }
 
 function onVideoSeeked() {
   seeking.value = false
-  emit('seeked', true)
+  //emit('seeked', true)
 }
 
 function onVideoEnded() {
