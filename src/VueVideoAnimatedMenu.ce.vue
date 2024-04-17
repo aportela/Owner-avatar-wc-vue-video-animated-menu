@@ -1,5 +1,5 @@
 <template>
-  <div class="container">
+  <div>
     <div v-if="loading">
       <!-- credits: https://github.com/n3r4zzurr0/svg-spinners -->
       <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 24 24">
@@ -25,11 +25,13 @@
         </div>
         <div id="column">
           <div id="video-container">
-            <video autoplay ref="videoRef" width="configuration.width" :height="configuration.height" autobuffer
-              preload="auto" :controls="false" @mousemove="onMouseMoveOverVideo" @canplaythrough.once="onVideoLoaded"
-              @seeking="onVideoSeeking" @seeked="onVideoSeeked" @ended="onVideoEnded">
+            <video id="video" autoplay ref="videoRef" :width="configuration.width" :height="configuration.height"
+              autobuffer preload="auto" :controls="false" @mousemove="onMouseMoveOverVideo"
+              @canplaythrough.once="onVideoLoaded" @seeking="onVideoSeeking" @seeked="onVideoSeeked"
+              @ended="onVideoEnded">
               <source :src="currentNode.source" :type="currentNode.mime">
             </video>
+            <canvas id="canvas" ref="canvasRef" :width="configuration.width" :height="configuration.height"></canvas>
             <Transition>
               <div id="video-dots" v-if="showVideoDots">
                 <span class="dot" v-for="children in currentNode.children" :key="children.id" :title="children.dot.hint"
@@ -56,7 +58,7 @@
       range.fromSecond).toPrecision(3) }}
           <span v-if="range.custom">(video real timeline second: {{ currentTime }} / {{
       videoData.duration.toPrecision(3)
-            }})</span>
+    }})</span>
         </p>
         <p>
           Mouse coordinates: {{ mouseX }}x{{ mouseY }}
@@ -66,10 +68,238 @@
   </div>
 </template>
 
+<script setup lang="ts">
+
+import { ref, withDefaults, watch } from 'vue'
+import type { Ref } from 'vue'
+
+interface Props {
+  config?: string,
+  showNativeVideoControls?: boolean,
+  hideSlider?: boolean,
+  seekOnMouseMove?: boolean,
+  showDebugData?: boolean
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  showNativeVideoControls: false,
+  hideSlider: false,
+  seekOnMouseMove: false,
+  showDebugData: false
+})
+
+const emit = defineEmits<{
+  (e: 'loaded', value: boolean): void
+  (e: 'seeking', value: boolean): void
+  (e: 'seeked', value: boolean): void
+}>()
+
+interface VideoInfo {
+  width: number,
+  height: number,
+  fps: number,
+  playbackRate: number,
+  duration: number,
+  totalFrames: number
+}
+
+interface VideoFrameRange {
+  custom: boolean,
+  fromSecond: number,
+  toSecond: number,
+  totalSeconds: number,
+  fromFrame: number,
+  toFrame: number,
+  totalFrames: number
+}
+
+const currentNode: Ref<Object> = ref({
+  source: null,
+  mime: null,
+  fps: 25,
+  playbackRate: 1
+});
+
+const previousNode = null;
+
+const configuration: Ref<Object | null> = ref(null);
+
+if (props.config) {
+  fetch(props.config)
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('El archivo no existe');
+      }
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        return response.json();
+      } else {
+        console.error('El archivo no es de tipo JSON');
+      }
+    })
+    .then(data => {
+      parseConfiguration(data);
+    })
+    .catch(error => {
+      console.error('Error al obtener los datos:', error);
+    })
+    .finally(() => {
+      //loading.value = false;
+    }
+    )
+}
+
+
+function parseConfiguration(config) {
+  if (!(config.root.type == "video" && config.root.mime && config.root.fps > 0 && config.root.source)) { // at this time, only video is supported
+    errors.value = true;
+  } else {
+    configuration.value = config;
+    currentNode.value.source = config.root.source;
+    currentNode.value.mime = config.root.mime;
+    currentNode.value.children = config.root.children;
+    currentNode.value.fps = config.root.fps || 25;
+    currentNode.value.playbackRate = config.root.playbackRate || 1;
+  }
+  loading.value = false;
+}
+
+const loading: Ref<boolean> = ref(true)
+const errors: Ref<boolean> = ref(false)
+
+const videoData: Ref<VideoInfo> = ref({ width: 0, height: 0, fps: 0, duration: 0, totalFrames: 0 })
+const videoRef = ref<HTMLVideoElement | null>(null)
+const canvasRef = ref<HTMLVideoElement | null>(null)
+
+const loadComplete: Ref<boolean> = ref(false)
+const seeking: Ref<boolean> = ref(false)
+
+const currentTime: Ref<number> = ref(0)
+const currentFrameIndex: Ref<number> = ref(0)
+
+const range: Ref<VideoFrameRange> = ref({ custom: false, fromSecond: 0, toSecond: 0, totalSeconds: 0, fromFrame: 0, toFrame: 0, totalFrames: 0 })
+
+const defaultFPS = 25
+
+const containerStyle = "width: " + props.width + "px;"
+
+const showVideoDots: Ref<boolean> = ref(false)
+const mouseX: Ref<number> = ref(0)
+const mouseY: Ref<number> = ref(0)
+
+watch(currentFrameIndex, (newValue: number) => {
+  if (!seeking.value) {
+    currentTime.value = Number((
+      newValue / videoData.value.fps
+    ).toPrecision(3))
+    if (videoRef && videoRef.value) {
+      videoRef.value.currentTime = currentTime.value
+    }
+  } else {
+    showVideoDots.value = videoData.value.totalFrames == currentFrameIndex.value
+  }
+})
+
+function onVideoLoaded(e: any) {
+  if (videoRef && videoRef.value) {
+    videoRef.value.playbackRate = currentNode.value.playbackRate;
+    videoData.value = {
+      width: videoRef.value.videoWidth,
+      height: videoRef.value.videoHeight,
+      fps: props.streamFps || defaultFPS,
+      duration: e.target.duration,
+      totalFrames: Math.ceil(e.target.duration * (props.streamFps || defaultFPS))
+    }
+  }
+  if (props.streamRangeFrom <= 0 && props.streamRangeTo <= 0) {
+    range.value = { custom: false, fromSecond: 0, toSecond: videoData.value.duration, totalSeconds: videoData.value.duration, fromFrame: 0, toFrame: videoData.value.totalFrames, totalFrames: videoData.value.totalFrames }
+  } else {
+    if (props.streamRangeFrom > 0 && props.streamRangeFrom < videoData.value.duration) {
+      range.value.fromSecond = props.streamRangeFrom
+      range.value.fromFrame = Math.ceil(range.value.fromSecond * (props.streamFps || defaultFPS))
+      range.value.custom = true
+    } else {
+      range.value.fromSecond = 0
+      range.value.fromFrame = 0
+    }
+    if (props.streamRangeTo > 0 && props.streamRangeTo <= videoData.value.duration) {
+      range.value.toSecond = props.streamRangeTo
+      range.value.toFrame = Math.ceil(range.value.toSecond * (props.streamFps || defaultFPS))
+      range.value.custom = true
+    } else {
+      range.value.toSecond = videoData.value.duration
+      range.value.toFrame = videoData.value.totalFrames
+    }
+    range.value.totalSeconds = range.value.toSecond - range.value.fromSecond
+    range.value.totalFrames = range.value.toFrame - range.value.fromFrame
+  }
+  if (range.value.fromSecond > 0 && videoRef && videoRef.value) {
+    currentFrameIndex.value = range.value.fromFrame
+  }
+  loadComplete.value = true
+  emit('loaded', true)
+}
+
+function onVideoPlay() {
+  showVideoDots.value = false
+}
+
+function onVideoSeeking() {
+  seeking.value = true
+  emit('seeking', true)
+}
+
+function onVideoSeeked() {
+  seeking.value = false
+  emit('seeked', true)
+}
+
+function onVideoEnded() {
+  showVideoDots.value = true
+  if (videoRef && videoRef.value && canvasRef && canvasRef.value) {
+    const canvas = canvasRef.value;
+    const context = canvas.getContext('2d');
+    context.drawImage(videoRef.value, 0, 0);
+    videoRef.value.style.display = 'none';
+    canvasRef.value.style.display = 'block';
+  }
+}
+
+function onMouseMoveOverVideo(e: any) {
+  const bounds = e.target.getBoundingClientRect()
+  mouseX.value = e.clientX - bounds.left
+  mouseY.value = e.clientY - bounds.top
+  if (props.seekOnMouseMove) {
+    currentFrameIndex.value = Math.round(
+      (mouseX.value * range.value.totalFrames) / bounds.width
+    ) + range.value.fromFrame
+  }
+}
+
+function getDotStyle(x: number, y: number) {
+  return ('left: ' + (x - 13) + 'px; top: ' + (y - 13) + 'px;')
+}
+
+function onDotClick(children: any) {
+  currentNode.value.source = children.source;
+  currentNode.value.mime = children.mime;
+  currentNode.value.children = children.children;
+  if (videoRef.value) {
+    videoRef.value.src = children.source;
+    videoRef.value?.play();
+  }
+}
+
+</script>
 
 <style scoped>
 div#video-container {
   position: relative;
+}
+
+canvas {
+  display: none;
+  z-index: 0
 }
 
 video {
@@ -144,224 +374,3 @@ li:hover {
   background: red;
 }
 </style>
-
-<script setup lang="ts">
-
-import { ref, withDefaults, watch } from 'vue'
-import type { Ref } from 'vue'
-
-
-interface Props {
-  config?: string,
-  width?: number,
-  height?: number,
-  poster?: string,
-  streamSource?: string,
-  streamMimeType?: string,
-  streamFps?: number,
-  streamRangeFrom?: number,
-  streamRangeTo?: number,
-  showNativeVideoControls?: boolean,
-  hideSlider?: boolean,
-  seekOnMouseMove?: boolean,
-  showDebugData?: boolean
-}
-
-const props = withDefaults(defineProps<Props>(), {
-  streamRangeFrom: -1,
-  streamRangeTo: -1,
-  showNativeVideoControls: false,
-  hideSlider: false,
-  seekOnMouseMove: false,
-  showDebugData: false
-})
-
-const emit = defineEmits<{
-  (e: 'loaded', value: boolean): void
-  (e: 'seeking', value: boolean): void
-  (e: 'seeked', value: boolean): void
-}>()
-
-interface VideoInfo {
-  width: number,
-  height: number,
-  fps: number,
-  duration: number,
-  totalFrames: number
-}
-
-interface VideoFrameRange {
-  custom: boolean,
-  fromSecond: number,
-  toSecond: number,
-  totalSeconds: number,
-  fromFrame: number,
-  toFrame: number,
-  totalFrames: number
-}
-
-
-const currentNode: Ref<Object> = ref({
-  source: null,
-  mime: null,
-});
-
-const configuration: Ref<Object | null> = ref(null);
-
-if (props.config) {
-  fetch(props.config)
-    .then(response => {
-      if (!response.ok) {
-        throw new Error('El archivo no existe');
-      }
-      const contentType = response.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        return response.json();
-      } else {
-        console.error('El archivo no es de tipo JSON');
-      }
-    })
-    .then(data => {
-      parseConfiguration(data);
-    })
-    .catch(error => {
-      console.error('Error al obtener los datos:', error);
-    })
-    .finally(() => {
-      //loading.value = false;
-    }
-    )
-}
-
-
-function parseConfiguration(config) {
-  if (!(config.root.type == "video" && config.root.mime && config.root.fps > 0 && config.root.source)) { // at this time, only video is supported
-    errors.value = true;
-  } else {
-    configuration.value = config;
-    currentNode.value.source = config.root.source;
-    currentNode.value.mime = config.root.mime;
-    currentNode.value.children = config.root.children;
-  }
-  loading.value = false;
-}
-
-const loading: Ref<boolean> = ref(true)
-const errors: Ref<boolean> = ref(false)
-
-const videoData: Ref<VideoInfo> = ref({ width: 0, height: 0, fps: 0, duration: 0, totalFrames: 0 })
-const videoRef = ref<HTMLVideoElement | null>(null)
-
-const loadComplete: Ref<boolean> = ref(false)
-const seeking: Ref<boolean> = ref(false)
-
-const currentTime: Ref<number> = ref(0)
-const currentFrameIndex: Ref<number> = ref(0)
-
-const range: Ref<VideoFrameRange> = ref({ custom: false, fromSecond: 0, toSecond: 0, totalSeconds: 0, fromFrame: 0, toFrame: 0, totalFrames: 0 })
-
-const defaultFPS = 25
-
-const containerStyle = "width: " + props.width + "px;"
-
-const showVideoDots: Ref<boolean> = ref(false)
-const mouseX: Ref<number> = ref(0)
-const mouseY: Ref<number> = ref(0)
-
-watch(currentFrameIndex, (newValue: number) => {
-  if (!seeking.value) {
-    currentTime.value = Number((
-      newValue / videoData.value.fps
-    ).toPrecision(3))
-    if (videoRef && videoRef.value) {
-      videoRef.value.currentTime = currentTime.value
-    }
-  } else {
-    showVideoDots.value = videoData.value.totalFrames == currentFrameIndex.value
-  }
-})
-
-function onVideoLoaded(e: any) {
-  if (videoRef && videoRef.value) {
-    videoRef.value.playbackRate = 8;
-    videoData.value = {
-      width: videoRef.value.videoWidth,
-      height: videoRef.value.videoHeight,
-      fps: props.streamFps || defaultFPS,
-      duration: e.target.duration,
-      totalFrames: Math.ceil(e.target.duration * (props.streamFps || defaultFPS))
-    }
-  }
-  if (props.streamRangeFrom <= 0 && props.streamRangeTo <= 0) {
-    range.value = { custom: false, fromSecond: 0, toSecond: videoData.value.duration, totalSeconds: videoData.value.duration, fromFrame: 0, toFrame: videoData.value.totalFrames, totalFrames: videoData.value.totalFrames }
-  } else {
-    if (props.streamRangeFrom > 0 && props.streamRangeFrom < videoData.value.duration) {
-      range.value.fromSecond = props.streamRangeFrom
-      range.value.fromFrame = Math.ceil(range.value.fromSecond * (props.streamFps || defaultFPS))
-      range.value.custom = true
-    } else {
-      range.value.fromSecond = 0
-      range.value.fromFrame = 0
-    }
-    if (props.streamRangeTo > 0 && props.streamRangeTo <= videoData.value.duration) {
-      range.value.toSecond = props.streamRangeTo
-      range.value.toFrame = Math.ceil(range.value.toSecond * (props.streamFps || defaultFPS))
-      range.value.custom = true
-    } else {
-      range.value.toSecond = videoData.value.duration
-      range.value.toFrame = videoData.value.totalFrames
-    }
-    range.value.totalSeconds = range.value.toSecond - range.value.fromSecond
-    range.value.totalFrames = range.value.toFrame - range.value.fromFrame
-  }
-  if (range.value.fromSecond > 0 && videoRef && videoRef.value) {
-    currentFrameIndex.value = range.value.fromFrame
-  }
-  loadComplete.value = true
-  emit('loaded', true)
-}
-
-function onVideoPlay() {
-  showVideoDots.value = false
-}
-
-function onVideoSeeking() {
-  seeking.value = true
-  emit('seeking', true)
-}
-
-function onVideoSeeked() {
-  seeking.value = false
-  emit('seeked', true)
-}
-
-function onVideoEnded() {
-  showVideoDots.value = true
-}
-
-function onMouseMoveOverVideo(e: any) {
-  const bounds = e.target.getBoundingClientRect()
-  mouseX.value = e.clientX - bounds.left
-  mouseY.value = e.clientY - bounds.top
-  if (props.seekOnMouseMove) {
-    currentFrameIndex.value = Math.round(
-      (mouseX.value * range.value.totalFrames) / bounds.width
-    ) + range.value.fromFrame
-  }
-}
-
-function getDotStyle(x: number, y: number) {
-  return ('left: ' + (x - 13) + 'px; top: ' + (y - 13) + 'px;')
-}
-
-function onDotClick(children: any) {
-  currentNode.value.source = children.source;
-  currentNode.value.mime = children.mime;
-  currentNode.value.children = children.children;
-  if (videoRef.value) {
-    videoRef.value.src = children.source;
-    videoRef.value?.play();
-  }
-}
-
-</script>
