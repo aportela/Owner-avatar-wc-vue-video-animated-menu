@@ -300,6 +300,42 @@ function onDotClick(children: any) {
 </script>
 
 <style scoped>
+div.columns {
+  display: flex;
+}
+
+div.column {
+  display: block;
+  flex-basis: 0;
+  flex-grow: 1;
+  flex-shrink: 1;
+}
+
+div.column.is-narrow {
+  flex: none;
+  width: unset;
+}
+
+
+/* left menu list */
+ul {
+  width: 200px;
+}
+
+li {
+  list-style-type: none;
+  border: 1px solid #444;
+  width: 160px;
+  padding: 16px 20px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  background: pink;
+}
+
+li:hover {
+  background: red;
+}
+
 div#video-container {
   position: relative;
 }
@@ -344,40 +380,5 @@ span.dot:hover {
 .v-enter-from,
 .v-leave-to {
   opacity: 0;
-}
-
-div.columns {
-  display: flex;
-}
-
-div.column {
-  display: block;
-  flex-basis: 0;
-  flex-grow: 1;
-  flex-shrink: 1;
-}
-
-div.column.is-narrow {
-  flex: none;
-  width: unset;
-
-}
-
-ul {
-  width: 200px;
-}
-
-li {
-  list-style-type: none;
-  border: 1px solid #444;
-  width: 160px;
-  padding: 16px 20px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  background: pink;
-}
-
-li:hover {
-  background: red;
 }
 </style>
