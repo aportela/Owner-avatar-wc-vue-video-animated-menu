@@ -18,52 +18,52 @@
     <div v-else-if="configuration">
       <div class="columns">
         <div id="column is-narrow">
-          <ul>
-            <li v-for="item in currentMenuItems" :key="item.id" v-if="showVideoDots">{{
+          <ul v-if="currentMenuItems && currentMenuItems.length > 0">
+            <li v-for="item in currentMenuItems" :key="item.id" v-show="showMenu" @click="onDotClick(item)">{{
     item.label }}</li>
+          </ul>
+          <ul v-else>
+            <li v-show="showMenu" @click="onBack">Back</li>
           </ul>
         </div>
         <div id="column">
           <div id="video-container">
-            <video id="video" autoplay ref="videoRef" :width="configuration.width" :height="configuration.height"
-              autobuffer preload="auto" :controls="false" @mousemove="onMouseMoveOverVideo"
-              @canplaythrough.once="onVideoLoaded" @seeking="onVideoSeeking" @seeked="onVideoSeeked"
-              @ended="onVideoEnded">
-              <source :src="currentNode.source" :type="currentNode.mime">
+            <video v-if="current" id="video" ref="videoRef" :controls="true" :width="configuration.width"
+              :height="configuration.height" autobuffer preload="auto" @mousemove="onMouseMoveOverVideo"
+              @canplaythrough="onVideoLoaded" @seeking="onVideoSeeking" @seeked="onVideoSeeked" @ended="onVideoEnded">
+              <source :src="current.source" :type="current.mime">
             </video>
             <canvas id="canvas" ref="canvasRef" :width="configuration.width" :height="configuration.height"></canvas>
             <Transition>
               <div id="video-dots" v-if="showVideoDots">
-                <span class="dot" v-for="children in currentNode.children" :key="children.id" :title="children.dot.hint"
+                <span class="dot" v-for="children in current.children" :key="children.id" :title="children.dot.hint"
                   :style="getDotStyle(children.dot.x, children.dot.y)" @click="onDotClick(children)">{{
     children.dot.label }}</span>
               </div>
             </Transition>
           </div>
-          <input style="width: 100%" type="range" :min="range.fromFrame" :max="range.toFrame" step="1"
-            v-model="currentFrameIndex" v-if="!hideSlider" :disable="!loadComplete">
+          <input style="width: 100%" type="range" :min="current.range.fromFrame" :max="current.range.toFrame" step="1"
+            v-model="currentFrameIndex" v-if="!hideSlider" :disable="!videoLoadedComplete">
+          <slot name="debug" :currentFrameIndex="currentFrameIndex" :currentTime="currentTime" :videoData="current"
+            :range="range" :seeking="seeking" v-if="showDebugData">
+            <p>Resolution: {{ current.width }}x{{ current.height }} ({{ current.fps }} fps)</p>
+            <p>Frame: {{ currentFrameIndex - current.range.fromFrame }} / {{ current.range.toFrame -
+    current.range.fromFrame }}
+              <span v-if="current.range.custom">(video real frame: {{ currentFrameIndex }} / {{ current.totalFrames
+                }})</span>
+              <span class="has-text-white has-background-black" v-show="seeking">(SEEKING)</span>
+            </p>
+            <p>Timeline second: {{ (currentTime - current.range.fromSecond).toPrecision(3) }} / {{
+    (current.range.toSecond -
+      current.range.fromSecond).toPrecision(3) }}
+              <span v-if="current.range.custom">(video real timeline second: {{ currentTime }} / {{
+    current.duration.toPrecision(3)
+                }})</span>
+            </p>
+          </slot>
+
         </div>
       </div>
-      <slot name="debug" :currentFrameIndex="currentFrameIndex" :currentTime="currentTime" :videoData="videoData"
-        :range="range" :seeking="seeking" v-if="showDebugData">
-        <p>Resolution: {{ width }}x{{ height }} <span
-            v-if="width != videoData.width || height != videoData.height">(video
-            scaled from: {{ videoData.width }}x{{
-    videoData.height }})</span> ({{ videoData.fps }} fps)</p>
-        <p>Frame: {{ currentFrameIndex - range.fromFrame }} / {{ range.toFrame - range.fromFrame }}
-          <span v-if="range.custom">(video real frame: {{ currentFrameIndex }} / {{ videoData.totalFrames }})</span>
-          <span class="has-text-white has-background-black" v-show="seeking">(SEEKING)</span>
-        </p>
-        <p>Timeline second: {{ (currentTime - range.fromSecond).toPrecision(3) }} / {{ (range.toSecond -
-    range.fromSecond).toPrecision(3) }}
-          <span v-if="range.custom">(video real timeline second: {{ currentTime }} / {{
-    videoData.duration.toPrecision(3)
-            }})</span>
-        </p>
-        <p>
-          Mouse coordinates: {{ mouseX }}x{{ mouseY }}
-        </p>
-      </slot>
     </div>
   </div>
 </template>
@@ -75,7 +75,7 @@ import type { Ref } from 'vue'
 
 interface Props {
   class?: string,
-  config?: string,
+  config: string,
   showNativeVideoControls?: boolean,
   hideSlider?: boolean,
   seekOnMouseMove?: boolean,
@@ -114,7 +114,10 @@ interface VideoInfo {
   playbackRate: number,
   duration: number,
   totalFrames: number,
-  range: VideoFrameRange
+  range?: VideoFrameRange,
+  source: string,
+  mime: string,
+  children: Array<VideoInfo>
 }
 
 
@@ -123,25 +126,66 @@ const defaultFPS = 25
 const videoRef = ref<HTMLVideoElement | null>(null)
 const canvasRef = ref<HTMLVideoElement | null>(null)
 
+const showMenu: Ref<boolean> = ref(false)
 const showVideoDots: Ref<boolean> = ref(false)
 
 const mouseX: Ref<number> = ref(0)
 const mouseY: Ref<number> = ref(0)
 
 
+const current: Ref<VideoInfo | null> = ref(null);
+
+/*
 const currentNode: Ref<Object> = ref({
   source: null,
   mime: null,
   fps: 25,
   playbackRate: 1
 });
-
-const previousNode = null;
+*/
 
 const loadingConfiguration: Ref<boolean> = ref(true)
 const configurationErrors: Ref<boolean> = ref(false)
 
 const configuration: Ref<Object | null> = ref(null);
+
+function setCurrent(node: any, autoplay: boolean) {
+  let customRange = {
+    custom: false,
+    fromSecond: 0,
+    toSecond: 0,
+    totalSeconds: 0,
+    fromFrame: 0,
+    toFrame: 0,
+    totalFrames: 0
+  }
+  if (node.range && node.range.from >= 0 && node.range.to > node.range.from) {
+    customRange.custom = true;
+    if (node.range.from >= 0) {
+      customRange.fromSecond = node.range.from;
+    }
+    if (node.range.to >= 0) {
+      customRange.toSecond = node.range.to;
+    }
+  }
+  current.value = {
+    width: 0,
+    height: 0,
+    fps: node.fps,
+    playbackRate: node.playbackRate,
+    duration: 0,
+    totalFrames: 0,
+    range: customRange,
+    source: node.source,
+    mime: node.mime,
+    children: node.children || []
+  };
+  showVideo();
+  if (autoplay) {
+    videoRef.value?.load();
+  }
+}
+
 
 if (props.config) {
   fetch(props.config)
@@ -161,11 +205,7 @@ if (props.config) {
         configurationErrors.value = true;
       } else {
         configuration.value = data;
-        currentNode.value.source = data.root.source;
-        currentNode.value.mime = data.root.mime;
-        currentNode.value.children = data.root.children;
-        currentNode.value.fps = data.root.fps || 25;
-        currentNode.value.playbackRate = data.root.playbackRate || 1;
+        setCurrent(data.root);
       }
     })
     .catch(error => {
@@ -179,13 +219,13 @@ if (props.config) {
 }
 
 const currentMenuItems = computed(() => {
-  return (configuration.value && configuration.value.root && configuration.value.root.children && configuration.value.root.children.length > 0 ? configuration.value.root.children : []);
+  return (current.value && current.value.children && current.value.children.length > 0 ? current.value.children : []);
 })
 
 
-const videoData: Ref<VideoInfo> = ref({ width: 0, height: 0, fps: 0, playbackRate: 0, duration: 0, totalFrames: 0 })
+//const videoData: Ref<VideoInfo> = ref({ width: 0, height: 0, fps: 0, playbackRate: 0, duration: 0, totalFrames: 0 })
 
-const loadComplete: Ref<boolean> = ref(false)
+const videoLoadedComplete: Ref<boolean> = ref(false)
 const seeking: Ref<boolean> = ref(false)
 
 const currentTime: Ref<number> = ref(0)
@@ -197,19 +237,36 @@ const range: Ref<VideoFrameRange> = ref({ custom: false, fromSecond: 0, toSecond
 watch(currentFrameIndex, (newValue: number) => {
   if (!seeking.value) {
     currentTime.value = Number((
-      newValue / videoData.value.fps
+      newValue / current.value.fps
     ).toPrecision(3))
     if (videoRef && videoRef.value) {
       videoRef.value.currentTime = currentTime.value
     }
+    // WARNING: TODO: RANGES!
+    if (currentTime.value < current.value.duration) {
+      showVideo();
+    } else {
+      showCanvas();
+    }
   } else {
-    showVideoDots.value = videoData.value.totalFrames == currentFrameIndex.value
+    showVideoDots.value = current.value.totalFrames == currentFrameIndex.value
+    showMenu.value = showVideoDots.value;
+    if (!showVideoDots.value) {
+      showVideo();
+    } else {
+      showCanvas();
+    }
   }
 })
 
 function onVideoLoaded(e: any) {
   if (videoRef && videoRef.value) {
-    videoRef.value.playbackRate = currentNode.value.playbackRate;
+    videoRef.value.playbackRate = current.value.playbackRate;
+    current.value.width = videoRef.value.videoWidth;
+    current.value.height = videoRef.value.videoHeight;
+    current.value.duration = e.target.duration;
+    current.value.totalFrames = Math.ceil(e.target.duration * (current.value.fps || defaultFPS))
+    /*
     videoData.value = {
       width: videoRef.value.videoWidth,
       height: videoRef.value.videoHeight,
@@ -217,38 +274,50 @@ function onVideoLoaded(e: any) {
       duration: e.target.duration,
       totalFrames: Math.ceil(e.target.duration * (props.streamFps || defaultFPS))
     }
+    */
   }
-  if (props.streamRangeFrom <= 0 && props.streamRangeTo <= 0) {
-    range.value = { custom: false, fromSecond: 0, toSecond: videoData.value.duration, totalSeconds: videoData.value.duration, fromFrame: 0, toFrame: videoData.value.totalFrames, totalFrames: videoData.value.totalFrames }
+  if (!current.value.range.custom) {
+    current.value.range = {
+      custom: false,
+      fromSecond: 0,
+      toSecond: current.value.duration,
+      totalSeconds: current.value.duration,
+      fromFrame: 0,
+      toFrame: current.value.totalFrames,
+      totalFrames: current.value.totalFrames
+    };
+    //range.value = { custom: false, fromSecond: 0, toSecond: videoData.value.duration, totalSeconds: videoData.value.duration, fromFrame: 0, toFrame: videoData.value.totalFrames, totalFrames: videoData.value.totalFrames }
   } else {
-    if (props.streamRangeFrom > 0 && props.streamRangeFrom < videoData.value.duration) {
-      range.value.fromSecond = props.streamRangeFrom
-      range.value.fromFrame = Math.ceil(range.value.fromSecond * (props.streamFps || defaultFPS))
-      range.value.custom = true
+    if (current.value.range.from > 0 && current.value.range.from < current.value.duration) {
+      current.value.range.fromSecond = current.value.range.from;
+      current.value.range.fromFrame = Math.ceil(current.value.range.fromSecond * (current.value.fps || defaultFPS))
+      current.value.range.custom = true
     } else {
-      range.value.fromSecond = 0
-      range.value.fromFrame = 0
+      current.value.range.fromSecond = 0
+      current.value.range.fromFrame = 0
     }
-    if (props.streamRangeTo > 0 && props.streamRangeTo <= videoData.value.duration) {
-      range.value.toSecond = props.streamRangeTo
-      range.value.toFrame = Math.ceil(range.value.toSecond * (props.streamFps || defaultFPS))
-      range.value.custom = true
+    if (current.value.range.to > 0 && current.value.range.to <= current.value.duration) {
+      current.value.range.toSecond = current.value.range.to;
+      current.value.range.toFrame = Math.ceil(current.value.range.toSecond * (current.value.fps || defaultFPS))
+      current.value.range.custom = true
     } else {
-      range.value.toSecond = videoData.value.duration
-      range.value.toFrame = videoData.value.totalFrames
+      current.value.range.toSecond = current.value.duration;
+      current.value.range.toFrame = current.value.totalFrames;
     }
-    range.value.totalSeconds = range.value.toSecond - range.value.fromSecond
-    range.value.totalFrames = range.value.toFrame - range.value.fromFrame
+    current.value.range.totalSeconds = current.value.range.toSecond - current.value.range.fromSecond;
+    current.value.range.totalFrames = current.value.range.toFrame - current.value.range.fromFrame;
   }
-  if (range.value.fromSecond > 0 && videoRef && videoRef.value) {
-    currentFrameIndex.value = range.value.fromFrame
+  if (current.value.range.fromSecond > 0 && videoRef && videoRef.value) {
+    currentFrameIndex.value = current.value.range.fromFrame;
   }
-  loadComplete.value = true
+  videoLoadedComplete.value = true
+  videoRef.value?.play();
   //emit('loaded', true)
 }
 
 function onVideoPlay() {
   showVideoDots.value = false
+  showMenu.value = showVideoDots.value;
 }
 
 function onVideoSeeking() {
@@ -262,16 +331,31 @@ function onVideoSeeked() {
 }
 
 function onVideoEnded() {
-  showVideoDots.value = true
-  if (videoRef && videoRef.value && canvasRef && canvasRef.value) {
-    const canvas = canvasRef.value;
-    const context = canvas.getContext('2d');
-    context.drawImage(videoRef.value, 0, 0);
+  if (current.value && current.value.children && current.value.children.length > 0) {
+    if (videoRef.value && canvasRef && canvasRef.value) {
+      const canvas = canvasRef.value;
+      const context = canvas.getContext('2d');
+      context.drawImage(videoRef.value, 0, 0);
+      showCanvas();
+      showVideoDots.value = true;
+      showMenu.value = showVideoDots.value;
+    }
+  }
+}
+
+function showVideo() {
+  if (videoRef.value && canvasRef && canvasRef.value) {
+    videoRef.value.style.display = 'block';
+    canvasRef.value.style.display = 'none';
+  }
+}
+
+function showCanvas() {
+  if (videoRef.value && canvasRef && canvasRef.value) {
     videoRef.value.style.display = 'none';
     canvasRef.value.style.display = 'block';
   }
 }
-
 function onMouseMoveOverVideo(e: any) {
   const bounds = e.target.getBoundingClientRect()
   mouseX.value = e.clientX - bounds.left
@@ -288,6 +372,7 @@ function getDotStyle(x: number, y: number) {
 }
 
 function onDotClick(children: any) {
+  /*
   currentNode.value.source = children.source;
   currentNode.value.mime = children.mime;
   currentNode.value.children = children.children;
@@ -295,6 +380,12 @@ function onDotClick(children: any) {
     videoRef.value.src = children.source;
     videoRef.value?.play();
   }
+  */
+  setCurrent(children, true);
+}
+
+function onBack() {
+  setCurrent(configuration.value.root, true);
 }
 
 </script>
@@ -320,6 +411,7 @@ div.column.is-narrow {
 /* left menu list */
 ul {
   width: 200px;
+  display: block;
 }
 
 li {

@@ -7,6 +7,10 @@
     "fps": 25,
     "playbackRate": 8,
     "source": "videos/diorama-start-rotation.mp4",
+    "range": {
+      "from": 0,
+      "to": 0
+    },
     "children": [
       {
         "id": 1,
